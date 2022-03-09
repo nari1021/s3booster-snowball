@@ -1,6 +1,8 @@
 #!/bin/env python3
 '''
 ChangeLogs
+- 2022.03.09:
+  - added untar_file function and delete uploaded tar file
 - 2022.01.19:
   - added no_extract option
 - 2021.08.12:
@@ -39,23 +41,22 @@ ChangeLogs
 ## boto3
 ## preferred os: linux (Windows works as well, but performance is slower)
 
-import os
-import boto3
-import botocore
-import multiprocessing
-from os import path, makedirs
-from datetime import datetime, timezone
-from botocore.exceptions import ClientError
+import argparse
+import io
 import logging
-import time
-import unicodedata
+import math
+import multiprocessing
+import os
 import random
 import string
-import math
-import io
 import tarfile
 import traceback
-import argparse
+from datetime import datetime, timezone
+from os import makedirs, path
+
+import boto3
+import botocore
+from botocore.exceptions import ClientError
 
 ## treating arguments
 parser = argparse.ArgumentParser()
@@ -164,11 +165,31 @@ def copy_to_snowball(tar_name, org_files_list):
     ### print metadata
     meta_out = s3_client.head_object(Bucket=bucket_name, Key=tar_name)
     success_log.info('meta info: %s ',str(meta_out))
+    ### untar file and delete uploaded tar file
+    untar_file(tar_name)
     success_log.info('%s is uploaded successfully\n' % tar_name)
     #print('metadata info: %s\n' % str(meta_out))
     #print('%s is uploaded successfully\n' % tar_name)
     return collected_files_no
 ## end of code from snowball_uploader
+
+## ter unzip
+def untar_file(tar_name):
+    s3_object = s3_client.get_object(Bucket=bucket_name, Key=tar_name)
+    tar_file = s3_object['Body'].read()
+    file_object = io.BytesIO(tar_file)
+
+    with tarfile.open(fileobj=file_object, mode=('r:'+compression)) as z:
+        for filename in z.getmembers():
+            success_log.info('file name :: %s',filename)
+            s3_client.upload_fileobj(
+                z.extractfile(filename),
+                Bucket=bucket_name,
+                Key=f'{filename.name}',
+                ExtraArgs={'Metadata': {'snowball-auto-extract': 'true'}}
+            )
+    
+    s3_client.delete_object(Bucket=bucket_name, Key=tar_name)
 
 # check source directory exist
 def check_srcdir(src_dir):
